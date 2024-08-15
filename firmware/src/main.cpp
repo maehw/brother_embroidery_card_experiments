@@ -1,13 +1,8 @@
 #include <Arduino.h>
-// #include <LittleFS.h>
-
 #include "flashchip.h"
 #include <array>
-
 #include "SdFat.h"
-// #include "flashserver.h"
 
-// FlashServer flashServer;
 FlashChip flashChip;
 SdFat SD;
 
@@ -15,7 +10,6 @@ SdFat SD;
 #define SD_CS_PIN BUILTIN_SDCARD
 
 void writeImage() {
-
   Serial.println("Writing to chip");
 
   char buffer[BUFFER_SIZE];
@@ -28,8 +22,7 @@ void writeImage() {
 
     Serial.println("Writing file contents to flash... ");
     while (uploadedFile.available()) {
-      for (uint32_t addr = 0; addr < FLASH_CHIP_CAPACITY && addr <= uploadedFile.size();
-          addr++) {
+      for (uint32_t addr = 0; addr < FLASH_CHIP_CAPACITY && addr <= uploadedFile.size(); addr++) {
         if (addr % BUFFER_SIZE == 0) {
           Serial.print("Currently at: ");
           Serial.println(addr);
@@ -37,7 +30,7 @@ void writeImage() {
         }
         byte dat = buffer[addr % BUFFER_SIZE];
 
-        if (dat == 0xFF) continue;
+        if (dat == 0xFF) continue; // We can skip bytes with value 0xFF as this is the erase memory's default value! Will speed things up.
         flashChip.writeOneByte(addr, dat);
       }
       Serial.println("Done writing");
@@ -99,23 +92,27 @@ void setup() {
 
   Serial.println("getting flash chip information");
   std::array<uint8_t, 2> serialno = flashChip.serialVersion();
-  Serial.print("Manufacturer ID returned (expect 0xBF): ");
+  Serial.print("Manufacturer ID returned (expect 0x");
+  Serial.print(MANUFACTURER_ID_MICROCHIP, HEX);
+  Serial.print("): ");
   Serial.println(serialno[0], HEX);
-  Serial.print("Device ID returned (expect 0xB7): ");
+  Serial.print("Device ID returned (expect 0x")
+  Serial.print(DEVICE_ID_MICROCHIP_SST39SF040, HEX);
+  Serial.print("): ");
   Serial.println(serialno[1], HEX);
 
-  if (serialno[0] != 0xBF || serialno[1] != 0xB7) {
+  if (serialno[0] != FlashChip::MANUFACTURER_ID_MICROCHIP || serialno[1] != DEVICE_ID_MICROCHIP_SST39SF040) {
     Serial.println("Unexpected manufacturer or device ID. Can't communicate with the flash.");
     exit(0);
   }
 
-
-  Serial.println("Ready for command [(W)rite, (V)erify]");
+  Serial.println("Ready for command [(W)rite, (V)erify, (F)lash dummy byte, (R)ead dummy byte, (E)rase chip]");
   while (Serial.available() == 0) {}
 }
 
 
 void loop() {
+  // Process commands from the serial interface
   if (Serial.available() > 0) {
     char inp = Serial.read();
     if (inp == 'W') {
@@ -129,11 +126,10 @@ void loop() {
     } else if (inp == 'E') {
       Serial.println("Erasing chip");
       flashChip.eraseAll();
-      delay(200);
       Serial.println("Erase completed");
-
     } else {
       Serial.println("Invalid input");
     }
   }
 }
+

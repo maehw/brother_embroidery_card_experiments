@@ -1,4 +1,5 @@
 #include "flashchip.h"
+// Note: This implementation targets the 4 Mbit (x8) Microchip SST39SF040 flash IC
 
 void FlashChip::init() {
   pinMode(CE, OUTPUT);
@@ -49,32 +50,11 @@ void FlashChip::init() {
   digitalWrite(A17, LOW);
   digitalWrite(A18, LOW);
 
-  // digitalWrite(Q0, LOW);
-  // digitalWrite(Q1, LOW);
-  // digitalWrite(Q2, LOW);
-  // digitalWrite(Q3, LOW);
-  // digitalWrite(Q4, LOW);
-  // digitalWrite(Q5, LOW);
-  // digitalWrite(Q6, LOW);
-  // digitalWrite(Q7, LOW);
-
-  // for (int i = 0; i <= MCP23016_PIN_GPIO1_7; i++) {
-  //   while (!mcp.detected()) {
-  //     Serial.println("Waiting for MCP");
-  //     delay(100);
-  //   }
-  //   // mcp.pinMode(i, OUTPUT);
-  // }
-
-  // while (!mcp.detected()) {
-  //   Serial.println("Waiting for MCP");
-  //   delay(100);
-  // }
+  // Configure data bus to input mode
   DATA_MODE(INPUT);
 }
 
-void FlashChip::DATA_MODE(uint8_t mod)
-{                        
+void FlashChip::DATA_MODE(uint8_t mod) {                        
   if (dataState != mod) {
     dataState = mod;     
     for (uint8_t addr = 0; addr < DATA_ADDRESSES_SIZE; addr++) {
@@ -84,38 +64,22 @@ void FlashChip::DATA_MODE(uint8_t mod)
 }
 
 void FlashChip::setDataLines(uint8_t data) {
-  for (uint8_t bit = 0; bit < DATA_ADDRESSES_SIZE; bit++) {
-
+  for (uint8_t bit = 0; bit < DATA_PINS_SIZE; bit++) {
     digitalWrite(data_addresses[bit], (data >> bit) & 1);
   }
 }
 
-void FlashChip::setAddressLines(uint32_t addr)  {
-  digitalWrite(A0,  addr >> 0  & 1);
-  digitalWrite(A1,  addr >> 1  & 1);
-  digitalWrite(A2,  addr >> 2  & 1);
-  digitalWrite(A3,  addr >> 3  & 1);
-  digitalWrite(A4,  addr >> 4  & 1);
-  digitalWrite(A5,  addr >> 5  & 1);
-  digitalWrite(A6,  addr >> 6  & 1);
-  digitalWrite(A7,  addr >> 7  & 1);
-  digitalWrite(A8,  addr >> 8  & 1);
-  digitalWrite(A9,  addr >> 9  & 1);
-  digitalWrite(A10, addr >> 10 & 1);
-  digitalWrite(A11, addr >> 11 & 1);
-  digitalWrite(A12, addr >> 12 & 1);
-  digitalWrite(A13, addr >> 13 & 1);
-  digitalWrite(A14, addr >> 14 & 1);
-  digitalWrite(A15, addr >> 15 & 1);
-  digitalWrite(A16, addr >> 16 & 1);
-  digitalWrite(A17, addr >> 17 & 1);
-  digitalWrite(A18, addr >> 18 & 1);
+void FlashChip::setAddressLines(uint32_t addr) {
+  for (uint8_t bit = 0; bit < ADDRESS_PINS_SIZE; bit++) {
+    digitalWrite(address_pins[bit], (data >> bit) & 1);
+  }
 }
 
 void FlashChip::sendCmd(uint32_t addr, uint8_t dat) {
-  // digitalWrite(CE, LOW);
-  // digitalWrite(OE, HIGH);
-  // digitalWrite(WE, HIGH);
+  // "A command is written by asserting WE# low while keeping CE# low. The address bus is latched 
+  //  on the falling edge of WE# or CE#, whichever occurs last. The data bus is latched on the 
+  //  rising edge of WE# or CE#, whichever occurs first."
+
   DATA_MODE(OUTPUT);
   setAddressLines(addr);
   setDataLines(dat);
@@ -123,6 +87,7 @@ void FlashChip::sendCmd(uint32_t addr, uint8_t dat) {
   digitalWrite(CE, LOW);
   digitalWrite(WE, LOW);
   delayNanoseconds(1); // TODO: fix this based on actual values
+  // Note: The "Byte-Program Time" T_BP is typ. 14 us / max. 20 us
   digitalWrite(WE, HIGH);
   digitalWrite(CE, HIGH);
   DATA_MODE(INPUT);
@@ -133,9 +98,11 @@ void FlashChip::writeOneByte(uint32_t addr, uint8_t dat) {
     Serial.println("Address exceeds flash chip capacity");
     return;
   }
-  sendCmd(0x5555, 0xAA);
-  sendCmd(0x2AAA, 0x55);
-  sendCmd(0x5555, 0xA0);
+
+  // Send "Software Command Sequence" for "Byte-Program" (four bus cycles)
+  sendCmd(CMD_UNLOCK1_ADDR, CMD_UNLOCK1_DATA);
+  sendCmd(CMD_UNLOCK2_ADDR, CMD_UNLOCK2_DATA);
+  sendCmd(CMD_PROGRAM_ADDR, CMD_PROGRAM_DATA);
   sendCmd(addr, dat);
 
   uint8_t old_val;
@@ -144,12 +111,14 @@ void FlashChip::writeOneByte(uint32_t addr, uint8_t dat) {
     old_val = readOneByte(addr);
     val = readOneByte(addr);
 
+    // Busy-wait using toggle bit method:
+    // "During the internal Program or Erase operation, any consecutive attempts to read DQ6 will 
+    //  produce alternating 0s and 1s, i.e., toggling between 0 and 1. When the internal Program 
+    //  or Erase operation is completed, the toggling will stop. The device is then ready for the 
+    //  next operation."
     if (((val >> 6) & 0x01) == ((old_val >> 6) & 0x01))
       break;
   }
-  // digitalWrite(CE, HIGH);
-  // digitalWrite(OE, LOW);
-  // delayMicroseconds(20);
 }
 
 uint8_t FlashChip::readOneByte(uint32_t addr) {
@@ -157,15 +126,16 @@ uint8_t FlashChip::readOneByte(uint32_t addr) {
     Serial.println("Address exceeds flash chip capacity");
     return 0;
   }
+
   DATA_MODE(INPUT);
   setAddressLines(addr);
   digitalWrite(CE, LOW);
   digitalWrite(OE, LOW);
 
   uint8_t dat = 0;
-  for (uint8_t bit = 0; bit < DATA_ADDRESSES_SIZE; bit++) {
+  for (uint8_t bit = 0; bit < DATA_PINS_SIZE; bit++) {
     dat |= digitalRead(data_addresses[bit]) << bit;
-    delayNanoseconds(50);
+    delayNanoseconds(50); // Why?!
   }
 
   digitalWrite(CE, HIGH);
@@ -175,28 +145,30 @@ uint8_t FlashChip::readOneByte(uint32_t addr) {
 }
 
 void FlashChip::eraseAll() {
-  sendCmd(0x5555, 0xAA);
-  sendCmd(0x2AAA, 0x55);
-  sendCmd(0x5555, 0x80);
-  sendCmd(0x5555, 0xAA);
-  sendCmd(0x2AAA, 0x55);
-  sendCmd(0x5555, 0x10);
+  // Send "Software Command Sequence" for "Chip-Erase" (six bus cycles)
+  sendCmd(CMD_UNLOCK1_ADDR, CMD_UNLOCK1_DATA);
+  sendCmd(CMD_UNLOCK2_ADDR, CMD_UNLOCK2_DATA);
+  sendCmd(CMD_ERASE_ADDR, CMD_ERASE_DATA);
+  sendCmd(CMD_UNLOCK1_ADDR, CMD_UNLOCK1_DATA);
+  sendCmd(CMD_UNLOCK2_ADDR, CMD_UNLOCK2_DATA);
+  sendCmd(CMD_CHIP_ERASE_ADDR, CMD_CHIP_ERASE_DATA);
   delay(200);
 }
 
 std::array<uint8_t,2> FlashChip::serialVersion() {
-  sendCmd(0x5555, 0xAA);
-  sendCmd(0x2AAA, 0x55);
-  sendCmd(0x5555, 0x90);
+  // Send "Software Command Sequence" for "Software ID Entry" (three bus cycles)
+  sendCmd(CMD_UNLOCK1_ADDR, CMD_UNLOCK1_DATA);
+  sendCmd(CMD_UNLOCK2_ADDR, CMD_UNLOCK2_DATA);
+  sendCmd(CMD_ENTER_SWID_ADDR, CMD_ENTER_SWID_DATA);
 
   std::array<uint8_t, 2> version;
-  version[0] = readOneByte(0);
-  version[1] = readOneByte(1);
+  version[0] = readOneByte(MANUFACTURER_ID_ADDR);
+  version[1] = readOneByte(DEVICE_ID_ADDR);
 
-  sendCmd(0x5555, 0xAA);
-  sendCmd(0x2AAA, 0x55);
-  sendCmd(0x5555, 0xF0);
+  // Send "Software Command Sequence" for "Software ID Exit" (three bus cycles)
+  sendCmd(CMD_UNLOCK1_ADDR, CMD_UNLOCK1_DATA);
+  sendCmd(CMD_UNLOCK2_ADDR, CMD_UNLOCK2_DATA);
+  sendCmd(CMD_EXIT_SWID_ADDR, CMD_EXIT_SWID_DATA);
 
   return version;
-
 }
